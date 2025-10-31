@@ -291,7 +291,7 @@ impl_into_di!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 /// ```
 #[macro_export]
 macro_rules! deps {
-    ($($dep:expr),*) => {
+    ($($dep:expr),* $(,)?) => {
         {
             // In the case if this macro receives zero arguments.
             #[allow(unused_mut)]
