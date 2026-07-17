@@ -3,7 +3,12 @@
 #[cfg(test)]
 const FIXED_LOCATION: &Location = Location::caller();
 
-use crate::{description, prelude::DependencyMap, HandlerDescription};
+use crate::{
+    description,
+    prelude::DependencyMap,
+    send::{BoxFuture, MaybeSend, MaybeSync},
+    HandlerDescription,
+};
 
 use std::{
     any::TypeId,
@@ -17,7 +22,6 @@ use std::{
 };
 
 use colored::Colorize;
-use futures::future::BoxFuture;
 
 /// An instance that receives an input and decides whether to break a chain or
 /// pass the value further.
@@ -120,12 +124,23 @@ impl Hash for Type {
     }
 }
 
-type DynFn<'a, Output> =
+type DynFn<'a, Output> = DynFnInner<'a, Output>;
+
+/// See [`DynFn`] (kept as a type alias so `Send`/`Sync` can be dropped on wasm).
+#[cfg(not(target_arch = "wasm32"))]
+type DynFnInner<'a, Output> =
     dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + Send + Sync + 'a;
+#[cfg(target_arch = "wasm32")]
+type DynFnInner<'a, Output> =
+    dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + 'a;
 
 /// A continuation representing the rest of a handler chain.
-pub type Cont<'a, Output> =
+pub type Cont<'a, Output> = ContInner<'a, Output>;
+#[cfg(not(target_arch = "wasm32"))]
+type ContInner<'a, Output> =
     Box<dyn FnOnce(DependencyMap) -> HandlerResult<'a, Output> + Send + Sync + 'a>;
+#[cfg(target_arch = "wasm32")]
+type ContInner<'a, Output> = Box<dyn FnOnce(DependencyMap) -> HandlerResult<'a, Output> + 'a>;
 
 /// An output type produced by a handler.
 pub type HandlerResult<'a, Output> = BoxFuture<'a, ControlFlow<Output, DependencyMap>>;
@@ -321,7 +336,7 @@ where
     #[track_caller]
     pub fn branch(self, next: Self) -> Self
     where
-        Output: Send,
+        Output: MaybeSend,
     {
         let required_update_kinds_set = self.description().merge_branch(next.description());
 
@@ -434,8 +449,8 @@ where
     ) -> ControlFlow<Output, DependencyMap>
     where
         Cont: FnOnce(DependencyMap) -> ContFut,
-        Cont: Send + Sync + 'a,
-        ContFut: Future<Output = ControlFlow<Output, DependencyMap>> + Send + 'a,
+        Cont: MaybeSend + MaybeSync + 'a,
+        ContFut: Future<Output = ControlFlow<Output, DependencyMap>> + MaybeSend + 'a,
     {
         (self.data.f)(input, Box::new(|event| Box::pin(cont(event)))).await
     }
@@ -504,8 +519,8 @@ impl Type {
 pub fn from_fn<'a, F, Fut, Output, Descr>(f: F, sig: HandlerSignature) -> Handler<'a, Output, Descr>
 where
     F: Fn(DependencyMap, Cont<'a, Output>) -> Fut,
-    F: Send + Sync + 'a,
-    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + Send + 'a,
+    F: MaybeSend + MaybeSync + 'a,
+    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + MaybeSend + 'a,
     Descr: HandlerDescription,
 {
     from_fn_with_description(Descr::user_defined(), f, sig)
@@ -520,8 +535,8 @@ pub fn from_fn_with_description<'a, F, Fut, Output, Descr>(
 ) -> Handler<'a, Output, Descr>
 where
     F: Fn(DependencyMap, Cont<'a, Output>) -> Fut,
-    F: Send + Sync + 'a,
-    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + Send + 'a,
+    F: MaybeSend + MaybeSync + 'a,
+    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + MaybeSend + 'a,
 {
     Handler {
         data: Arc::new(HandlerData {
@@ -627,13 +642,7 @@ pub fn type_check(sig: &HandlerSignature, container: &DependencyMap, assumptions
                         missing_types_msg.red().bold().to_string()
                     },
                     print_types(
-                        obligations.iter().filter_map(|(ty, _location)| {
-                            if !container_types.contains(ty) {
-                                Some(ty)
-                            } else {
-                                None
-                            }
-                        }),
+                        obligations.keys().filter(|ty| !container_types.contains(ty)),
                         |ty| { format!("`{}` from {}", ty.name, obligations[ty]) },
                     ),
                     note_msg,

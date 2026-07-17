@@ -13,7 +13,9 @@
 //! [dependency injection]: https://en.wikipedia.org/wiki/Dependency_injection
 //! [this discussion on StackOverflow]: https://stackoverflow.com/questions/130794/what-is-dependency-injection
 
-use futures::future::{ready, BoxFuture};
+use futures::future::ready;
+
+use crate::send::{BoxFuture, MaybeSend, MaybeSync};
 
 use std::{
     any::{Any, TypeId},
@@ -93,7 +95,7 @@ impl PartialEq for DependencyMap {
     fn eq(&self, other: &Self) -> bool {
         let keys1 = self.map.keys();
         let keys2 = other.map.keys();
-        keys1.len() == keys2.len() && keys1.zip(keys2).map(|(k1, k2)| k1 == k2).all(|x| x)
+        keys1.len() == keys2.len() && keys1.zip(keys2).all(|(k1, k2)| k1 == k2)
     }
 }
 
@@ -201,7 +203,10 @@ where
 }
 
 /// A function with all dependencies satisfied.
+#[cfg(not(target_arch = "wasm32"))]
 pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> BoxFuture<'a, Output> + Send + Sync + 'a>;
+#[cfg(target_arch = "wasm32")]
+pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> crate::BoxFuture<'a, Output> + 'a>;
 
 /// Turns a synchronous function into a type that implements [`Injectable`].
 pub struct Asyncify<F>(pub F);
@@ -210,8 +215,8 @@ macro_rules! impl_into_di {
     ($($generic:ident),*) => {
         impl<Func, Output, Fut, $($generic),*> Injectable<Output, ($($generic,)*)> for Func
         where
-            Func: Fn($($generic),*) -> Fut + Send + Sync + 'static,
-            Fut: Future<Output = Output> + Send + 'static,
+            Func: Fn($($generic),*) -> Fut + MaybeSend + MaybeSync + 'static,
+            Fut: Future<Output = Output> + MaybeSend + 'static,
             Output: 'static,
             $($generic: Clone + Send + Sync + 'static),*
         {
@@ -234,8 +239,8 @@ macro_rules! impl_into_di {
 
         impl<Func, Output, $($generic),*> Injectable<Output, ($($generic,)*)> for Asyncify<Func>
         where
-            Func: Fn($($generic),*) -> Output + Send + Sync + 'static,
-            Output: Send + 'static,
+            Func: Fn($($generic),*) -> Output + MaybeSend + MaybeSync + 'static,
+            Output: MaybeSend + 'static,
             $($generic: Clone + Send + Sync + 'static),*
         {
             #[allow(non_snake_case)]

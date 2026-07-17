@@ -1,5 +1,6 @@
 use crate::{
     di::{Asyncify, Injectable},
+    send::{MaybeSend, MaybeSync},
     Handler, HandlerDescription,
 };
 
@@ -13,7 +14,7 @@ where
     #[track_caller]
     pub fn filter<Pred, FnArgs>(self, pred: Pred) -> Handler<'a, Output, Descr>
     where
-        Asyncify<Pred>: Injectable<bool, FnArgs> + Send + Sync + 'a,
+        Asyncify<Pred>: Injectable<bool, FnArgs> + MaybeSend + MaybeSync + 'a,
     {
         self.chain(crate::filter(pred))
     }
@@ -23,7 +24,7 @@ where
     #[track_caller]
     pub fn filter_async<Pred, FnArgs>(self, pred: Pred) -> Handler<'a, Output, Descr>
     where
-        Pred: Injectable<bool, FnArgs> + Send + Sync + 'a,
+        Pred: Injectable<bool, FnArgs> + MaybeSend + MaybeSync + 'a,
     {
         self.chain(crate::filter_async(pred))
     }
@@ -33,7 +34,7 @@ where
     #[track_caller]
     pub fn filter_map<Proj, NewType, Args>(self, proj: Proj) -> Handler<'a, Output, Descr>
     where
-        Asyncify<Proj>: Injectable<Option<NewType>, Args> + Send + Sync + 'a,
+        Asyncify<Proj>: Injectable<Option<NewType>, Args> + MaybeSend + MaybeSync + 'a,
         NewType: Send + Sync + 'static,
     {
         self.chain(crate::filter_map(proj))
@@ -44,7 +45,7 @@ where
     #[track_caller]
     pub fn filter_map_async<Proj, NewType, Args>(self, proj: Proj) -> Handler<'a, Output, Descr>
     where
-        Proj: Injectable<Option<NewType>, Args> + Send + Sync + 'a,
+        Proj: Injectable<Option<NewType>, Args> + MaybeSend + MaybeSync + 'a,
         NewType: Send + Sync + 'static,
     {
         self.chain(crate::filter_map_async(proj))
@@ -55,7 +56,7 @@ where
     #[track_caller]
     pub fn map<Proj, NewType, Args>(self, proj: Proj) -> Handler<'a, Output, Descr>
     where
-        Asyncify<Proj>: Injectable<NewType, Args> + Send + Sync + 'a,
+        Asyncify<Proj>: Injectable<NewType, Args> + MaybeSend + MaybeSync + 'a,
         NewType: Send + Sync + 'static,
     {
         self.chain(crate::map(proj))
@@ -66,7 +67,7 @@ where
     #[track_caller]
     pub fn map_async<Proj, NewType, Args>(self, proj: Proj) -> Handler<'a, Output, Descr>
     where
-        Proj: Injectable<NewType, Args> + Send + Sync + 'a,
+        Proj: Injectable<NewType, Args> + MaybeSend + MaybeSync + 'a,
         NewType: Send + Sync + 'static,
     {
         self.chain(crate::map_async(proj))
@@ -77,7 +78,7 @@ where
     #[track_caller]
     pub fn inspect<F, Args>(self, f: F) -> Handler<'a, Output, Descr>
     where
-        Asyncify<F>: Injectable<(), Args> + Send + Sync + 'a,
+        Asyncify<F>: Injectable<(), Args> + MaybeSend + MaybeSync + 'a,
     {
         self.chain(crate::inspect(f))
     }
@@ -87,7 +88,7 @@ where
     #[track_caller]
     pub fn inspect_async<F, Args>(self, f: F) -> Handler<'a, Output, Descr>
     where
-        F: Injectable<(), Args> + Send + Sync + 'a,
+        F: Injectable<(), Args> + MaybeSend + MaybeSync + 'a,
     {
         self.chain(crate::inspect_async(f))
     }
@@ -97,7 +98,7 @@ where
     #[track_caller]
     pub fn endpoint<F, FnArgs>(self, f: F) -> Handler<'a, Output, Descr>
     where
-        F: Injectable<Output, FnArgs> + Send + Sync + 'a,
+        F: Injectable<Output, FnArgs> + MaybeSend + MaybeSync + 'a,
         Output: 'static,
     {
         self.chain(crate::endpoint(f))

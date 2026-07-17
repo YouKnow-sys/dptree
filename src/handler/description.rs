@@ -3,6 +3,8 @@
 mod interest_set;
 mod unspecified;
 
+use crate::send::{MaybeSend, MaybeSync};
+
 pub use interest_set::{EventKind, InterestSet};
 pub use unspecified::Unspecified;
 
@@ -56,7 +58,7 @@ pub use unspecified::Unspecified;
 ///         .branch(dptree::inspect(|| ())),
 /// );
 /// ```
-pub trait HandlerDescription: Sized + Send + Sync + 'static {
+pub trait HandlerDescription: Sized + MaybeSend + MaybeSync + 'static {
     /// Description for [`entry`](crate::entry).
     fn entry() -> Self;
 

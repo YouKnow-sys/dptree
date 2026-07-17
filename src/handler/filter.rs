@@ -2,6 +2,7 @@ use crate::{
     di::{Asyncify, Injectable},
     from_fn_with_description,
     handler::core::Handler,
+    send::{MaybeSend, MaybeSync},
     HandlerDescription, HandlerSignature,
 };
 
@@ -16,7 +17,7 @@ use std::{collections::BTreeSet, ops::ControlFlow, sync::Arc};
 #[track_caller]
 pub fn filter<'a, Pred, Output, FnArgs, Descr>(pred: Pred) -> Handler<'a, Output, Descr>
 where
-    Asyncify<Pred>: Injectable<bool, FnArgs> + Send + Sync + 'a,
+    Asyncify<Pred>: Injectable<bool, FnArgs> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
 {
@@ -28,7 +29,7 @@ where
 #[track_caller]
 pub fn filter_async<'a, Pred, Output, FnArgs, Descr>(pred: Pred) -> Handler<'a, Output, Descr>
 where
-    Pred: Injectable<bool, FnArgs> + Send + Sync + 'a,
+    Pred: Injectable<bool, FnArgs> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
 {
@@ -43,7 +44,7 @@ pub fn filter_with_description<'a, Pred, Output, FnArgs, Descr>(
     pred: Pred,
 ) -> Handler<'a, Output, Descr>
 where
-    Asyncify<Pred>: Injectable<bool, FnArgs> + Send + Sync + 'a,
+    Asyncify<Pred>: Injectable<bool, FnArgs> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
 {
     filter_async_with_description(description, Asyncify(pred))
@@ -57,7 +58,7 @@ pub fn filter_async_with_description<'a, Pred, Output, FnArgs, Descr>(
     pred: Pred,
 ) -> Handler<'a, Output, Descr>
 where
-    Pred: Injectable<bool, FnArgs> + Send + Sync + 'a,
+    Pred: Injectable<bool, FnArgs> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
 {
     let pred = Arc::new(pred);

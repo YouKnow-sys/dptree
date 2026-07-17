@@ -1,6 +1,9 @@
 use crate::{
-    description, di::Injectable, from_fn_with_description, Handler, HandlerDescription,
-    HandlerSignature,
+    description,
+    di::Injectable,
+    from_fn_with_description,
+    send::{MaybeSend, MaybeSync},
+    Handler, HandlerDescription, HandlerSignature,
 };
 
 use std::{collections::BTreeSet, ops::ControlFlow, sync::Arc};
@@ -16,7 +19,7 @@ use futures::FutureExt;
 #[track_caller]
 pub fn endpoint<'a, F, Output, FnArgs, Descr>(f: F) -> Endpoint<'a, Output, Descr>
 where
-    F: Injectable<Output, FnArgs> + Send + Sync + 'a,
+    F: Injectable<Output, FnArgs> + MaybeSend + MaybeSync + 'a,
     Output: 'static,
     Descr: HandlerDescription,
 {
