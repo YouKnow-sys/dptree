@@ -93,7 +93,8 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_inspect() {
         let value = 123;
         let inspect_passed = Arc::new(AtomicBool::new(false));

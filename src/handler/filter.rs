@@ -94,7 +94,8 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_filter() {
         let input_value = 123;
         let input = deps![input_value];
@@ -114,7 +115,8 @@ mod tests {
         assert!(result == ControlFlow::Break(output));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_and_then_filter() {
         let input = 123;
         let output = 7;

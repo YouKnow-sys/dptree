@@ -108,7 +108,8 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_some() {
         let value = 123;
 
@@ -123,7 +124,8 @@ mod tests {
         assert!(result == ControlFlow::Break(value));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_none() {
         let result = help_inference(filter_map(|| None::<i32>))
             .endpoint(|| async move { unreachable!() })

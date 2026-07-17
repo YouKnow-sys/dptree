@@ -11,12 +11,35 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v2
-    - name: Clippy
-      run: cargo clippy --all --all-features --all-targets --examples
-    - name: Tests
-      run: cargo test --all
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy
+        run: cargo clippy --all --all-features --all-targets --examples
+      - name: Tests
+        run: cargo test --all
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Clippy (wasm32)
+        run: cargo clippy --all --all-features --all-targets --examples --target wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Tests (wasm32, node)
+        # doctests aren't run here: rustdoc's doctest harness doesn't integrate
+        # cleanly with wasm-bindgen-test-runner (should_panic detection breaks).
+        # Doctests are still covered by the native `build` job above so it should be safe.
+        run: wasm-pack test --node --lib

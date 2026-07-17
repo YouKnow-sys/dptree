@@ -3,7 +3,7 @@ use dptree::prelude::*;
 type WebHandler = Endpoint<'static, String>;
 
 #[rustfmt::skip]
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let web_server = dptree::entry()
         .branch(smiles_handler())

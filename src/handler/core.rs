@@ -124,15 +124,11 @@ impl Hash for Type {
     }
 }
 
-type DynFn<'a, Output> = DynFnInner<'a, Output>;
-
-/// See [`DynFn`] (kept as a type alias so `Send`/`Sync` can be dropped on wasm).
 #[cfg(not(target_arch = "wasm32"))]
-type DynFnInner<'a, Output> =
+type DynFn<'a, Output> =
     dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + Send + Sync + 'a;
 #[cfg(target_arch = "wasm32")]
-type DynFnInner<'a, Output> =
-    dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + 'a;
+type DynFn<'a, Output> = dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + 'a;
 
 /// A continuation representing the rest of a handler chain.
 pub type Cont<'a, Output> = ContInner<'a, Output>;
@@ -172,7 +168,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # #[tokio::main]
+    /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
     /// use dptree::prelude::*;
     ///
@@ -308,7 +304,7 @@ where
     /// ```
     /// use dptree::prelude::*;
     ///
-    /// # #[tokio::main]
+    /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
     ///
     /// #[derive(Debug, PartialEq)]
@@ -431,7 +427,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # #[tokio::main]
+    /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
     /// use dptree::prelude::*;
     ///
@@ -659,6 +655,7 @@ pub(crate) fn help_inference<Output>(h: Handler<Output>) -> Handler<Output> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     use crate::{
@@ -670,7 +667,8 @@ mod tests {
 
     use maplit::{btreemap, btreeset, hashset};
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_from_fn_break() {
         let input = 123;
         let output = "ABC";
@@ -698,7 +696,8 @@ mod tests {
         assert!(result == ControlFlow::Break(output));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_from_fn_continue() {
         let input = 123;
         type Output = &'static str;
@@ -726,7 +725,8 @@ mod tests {
         assert!(result == ControlFlow::Continue(deps![input]));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_entry() {
         let input = 123;
         type Output = &'static str;
@@ -736,7 +736,8 @@ mod tests {
         assert!(result == ControlFlow::Continue(deps![input]));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_execute() {
         let input = 123;
         let output = "ABC";
@@ -767,7 +768,8 @@ mod tests {
         assert!(result == ControlFlow::Break(output));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_deeply_nested_tree() {
         #[derive(Debug, PartialEq)]
         enum Output {
@@ -807,7 +809,8 @@ mod tests {
         assert_eq!(dispatcher.dispatch(deps![-2]).await, ControlFlow::Break(Output::LT));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn allowed_updates() {
         use crate::description::{EventKind, InterestSet};
         use UpdateKind::*;
@@ -928,7 +931,8 @@ mod tests {
         assert(filter_a().chain(filter_b()).endpoint(|| async {}), hashset! {});
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn type_check_success() {
         #[derive(Clone)]
         struct A;
@@ -967,7 +971,8 @@ mod tests {
         test!(C);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Your handler accepts the following types:
     `dptree::handler::core::tests::type_check_panic::A`
     `dptree::handler::core::tests::type_check_panic::B`
@@ -1005,7 +1010,8 @@ Make sure all the required values are provided to the handler. For more informat
         );
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn type_eq_ord_consistent() {
         #[derive(Clone)]
         struct A;
@@ -1018,7 +1024,8 @@ Make sure all the required values are provided to the handler. For more informat
         assert!(!(ta1 > ta2));
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn type_btreeset_not_contains_duplicate_name() {
         #[derive(Clone)]
         struct A;
@@ -1033,7 +1040,8 @@ Make sure all the required values are provided to the handler. For more informat
         assert!(!set.contains(&tb));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn type_infer_check_chained_combinators() {
         #[derive(Clone)]
         struct A;
@@ -1103,7 +1111,8 @@ Make sure all the required values are provided to the handler. For more informat
         assert_eq!(h.dispatch(deps).await, ControlFlow::Break(H));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn type_infer_check_branched_combinators() {
         #[derive(Clone)]
         struct A;
@@ -1157,7 +1166,8 @@ Make sure all the required values are provided to the handler. For more informat
         assert_eq!(h.dispatch(deps).await, ControlFlow::Break(F));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn obligations_priority() {
         #[derive(Clone)]
         struct A;
@@ -1194,19 +1204,22 @@ Make sure all the required values are provided to the handler. For more informat
         test::<A>(h, 28);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Ill-typed handler chain: the second handler cannot be an entry")]
     fn chain_entry() {
         let _: Handler<()> = entry().chain(entry());
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Ill-typed handler branch: the second handler cannot be an entry")]
     fn branch_entry() {
         let _: Handler<()> = entry().branch(entry());
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn chain_branch_type_check() {
         #[derive(Clone)]
         struct A;
@@ -1219,7 +1232,8 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn guaranteed_outcomes_chain_success() {
         #[derive(Clone)]
         struct A;
@@ -1234,7 +1248,8 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn conditional_outcomes_chain_success() {
         #[derive(Clone)]
         struct A;
@@ -1247,7 +1262,8 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn guaranteed_outcomes_branch_success() {
         #[derive(Clone)]
         struct A;
@@ -1263,7 +1279,8 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn mixed_outcomes_chain() {
         #[derive(Clone)]
         struct A;
@@ -1284,7 +1301,8 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn branch_with_guaranteed_continuation() {
         #[derive(Clone)]
         struct A;
@@ -1302,7 +1320,8 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Your handler accepts the following types:")]
     async fn deeply_nested_conditional_failure() {
         #[derive(Clone)]
@@ -1322,28 +1341,32 @@ Make sure all the required values are provided to the handler. For more informat
         type_check(handler.sig(), &deps![], &[]);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
                                second handler will never be called.")]
     fn chain_endpoint_with_handler() {
         let _: Handler<()> = endpoint(|| async {}).endpoint(|| async {});
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
                                second handler will never be called.")]
     fn chain_endpoint_with_filter() {
         let _: Handler<()> = endpoint(|| async {}).filter(|_: i32| true);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
                                second handler will never be called.")]
     fn chain_endpoint_with_map() {
         let _: Handler<()> = endpoint(|| async {}).map(|| 42);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
                                second handler will never be called.")]
     fn chain_complex_endpoint_dead_code() {

@@ -206,7 +206,7 @@ where
 #[cfg(not(target_arch = "wasm32"))]
 pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> BoxFuture<'a, Output> + Send + Sync + 'a>;
 #[cfg(target_arch = "wasm32")]
-pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> crate::BoxFuture<'a, Output> + 'a>;
+pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> BoxFuture<'a, Output> + 'a>;
 
 /// Turns a synchronous function into a type that implements [`Injectable`].
 pub struct Asyncify<F>(pub F);
@@ -311,7 +311,8 @@ macro_rules! deps {
 mod tests {
     use super::*;
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn get() {
         let mut map = DependencyMap::new();
         map.insert(42i32);
@@ -323,7 +324,8 @@ mod tests {
         assert_eq!(map.get(), Arc::new(true));
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn try_get() {
         let mut map = DependencyMap::new();
         assert_eq!(map.try_get::<i32>(), None);
@@ -332,7 +334,8 @@ mod tests {
         assert_eq!(map.try_get::<f32>(), None);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn same_keys() {
         let mut map_bool1 = DependencyMap::new();
         let mut map_bool2 = DependencyMap::new();

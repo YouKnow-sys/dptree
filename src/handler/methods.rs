@@ -112,7 +112,8 @@ mod tests {
     use crate::{deps, help_inference};
 
     // Test that these methods just do compile.
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_methods() {
         let value = 42;
 

@@ -1,13 +1,13 @@
 //! An implementation of the [chain (tree) of responsibility] pattern.
 //!
 //! [[`examples/web_server.rs`](https://github.com/teloxide/dptree/blob/master/examples/web_server.rs)]
-//! ```
+//! ```rust
 //! use dptree::prelude::*;
 //!
 //! type WebHandler = Endpoint<'static, String>;
 //!
 //! #[rustfmt::skip]
-//! #[tokio::main]
+//! #[tokio::main(flavor = "current_thread")]
 //! async fn main() {
 //!     let web_server = dptree::entry()
 //!         .branch(smiles_handler())
@@ -95,10 +95,10 @@ pub use handler::*;
 ///
 /// ## Examples
 ///
-/// ```
+/// ```rust
 /// use dptree::prelude::*;
 ///
-/// # #[tokio::main]
+/// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
 /// #[derive(Clone)]
 /// enum Command {
@@ -170,7 +170,8 @@ mod tests {
         Other,
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_empty_variant() {
         let input = State::A;
         let h: crate::Handler<_> = case![State::A].endpoint(|| async move { 123 });
@@ -179,7 +180,8 @@ mod tests {
         assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_single_fn_variant() {
         let input = State::B(42);
         let h: crate::Handler<_> = case![State::B(x)].endpoint(|x: i32| async move {
@@ -191,7 +193,8 @@ mod tests {
         assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_single_fn_variant_trailing_comma() {
         let input = State::B(42);
         let h: crate::Handler<_> = case![State::B(x,)].endpoint(|(x,): (i32,)| async move {
@@ -203,7 +206,8 @@ mod tests {
         assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_fn_variant() {
         let input = State::C(42, "abc");
         let h: crate::Handler<_> =
@@ -217,7 +221,8 @@ mod tests {
         assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_single_struct_variant() {
         let input = State::D { foo: 42 };
         let h: crate::Handler<_> = case![State::D { foo }].endpoint(|x: i32| async move {
@@ -229,7 +234,8 @@ mod tests {
         assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_single_struct_variant_trailing_comma() {
         let input = State::D { foo: 42 };
         #[rustfmt::skip] // rustfmt removes the trailing comma from `State::D { foo, }`, but it plays a vital role in this test.
@@ -242,7 +248,8 @@ mod tests {
         assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn handler_struct_variant() {
         let input = State::E { foo: 42, bar: "abc" };
         let h: crate::Handler<_> =
