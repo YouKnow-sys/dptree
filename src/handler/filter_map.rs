@@ -108,30 +108,28 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    async fn test_some() {
-        let value = 123;
+    crate::cross_test! {
+        async fn test_some() {
+            let value = 123;
 
-        let result = help_inference(filter_map(move || Some(value)))
-            .endpoint(move |event: i32| async move {
-                assert_eq!(event, value);
-                value
-            })
-            .dispatch(deps![])
-            .await;
+            let result = help_inference(filter_map(move || Some(value)))
+                .endpoint(move |event: i32| async move {
+                    assert_eq!(event, value);
+                    value
+                })
+                .dispatch(deps![])
+                .await;
 
-        assert!(result == ControlFlow::Break(value));
-    }
+            assert!(result == ControlFlow::Break(value));
+        }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    async fn test_none() {
-        let result = help_inference(filter_map(|| None::<i32>))
-            .endpoint(|| async move { unreachable!() })
-            .dispatch(deps![])
-            .await;
+        async fn test_none() {
+            let result = help_inference(filter_map(|| None::<i32>))
+                .endpoint(|| async move { unreachable!() })
+                .dispatch(deps![])
+                .await;
 
-        assert!(result == ControlFlow::Continue(crate::deps![]));
+            assert!(result == ControlFlow::Continue(crate::deps![]));
+        }
     }
 }

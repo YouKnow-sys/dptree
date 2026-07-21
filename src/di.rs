@@ -311,41 +311,37 @@ macro_rules! deps {
 mod tests {
     use super::*;
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn get() {
-        let mut map = DependencyMap::new();
-        map.insert(42i32);
-        map.insert("hello world");
-        map.insert_container(deps![true]);
+    crate::cross_test! {
+        fn get() {
+            let mut map = DependencyMap::new();
+            map.insert(42i32);
+            map.insert("hello world");
+            map.insert_container(deps![true]);
 
-        assert_eq!(map.get(), Arc::new(42i32));
-        assert_eq!(map.get(), Arc::new("hello world"));
-        assert_eq!(map.get(), Arc::new(true));
-    }
+            assert_eq!(map.get(), Arc::new(42i32));
+            assert_eq!(map.get(), Arc::new("hello world"));
+            assert_eq!(map.get(), Arc::new(true));
+        }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn try_get() {
-        let mut map = DependencyMap::new();
-        assert_eq!(map.try_get::<i32>(), None);
-        map.insert(42i32);
-        assert_eq!(map.try_get(), Some(Arc::new(42i32)));
-        assert_eq!(map.try_get::<f32>(), None);
-    }
+        fn try_get() {
+            let mut map = DependencyMap::new();
+            assert_eq!(map.try_get::<i32>(), None);
+            map.insert(42i32);
+            assert_eq!(map.try_get(), Some(Arc::new(42i32)));
+            assert_eq!(map.try_get::<f32>(), None);
+        }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn same_keys() {
-        let mut map_bool1 = DependencyMap::new();
-        let mut map_bool2 = DependencyMap::new();
-        let map_empty = DependencyMap::new();
+        fn same_keys() {
+            let mut map_bool1 = DependencyMap::new();
+            let mut map_bool2 = DependencyMap::new();
+            let map_empty = DependencyMap::new();
 
-        map_bool1.insert(false);
-        map_bool2.insert(true);
+            map_bool1.insert(false);
+            map_bool2.insert(true);
 
-        assert_eq!(map_bool1, map_bool2);
-        assert_ne!(map_bool1, map_empty);
-        assert_ne!(map_bool2, map_empty);
+            assert_eq!(map_bool1, map_bool2);
+            assert_ne!(map_bool1, map_empty);
+            assert_ne!(map_bool2, map_empty);
+        }
     }
 }

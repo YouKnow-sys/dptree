@@ -105,19 +105,19 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    async fn test_map() {
-        let value = 123;
+    crate::cross_test! {
+        async fn test_map() {
+            let value = 123;
 
-        let result = help_inference(map(move || value))
-            .endpoint(move |event: i32| async move {
-                assert_eq!(event, value);
-                value
-            })
-            .dispatch(deps![])
-            .await;
+            let result = help_inference(map(move || value))
+                .endpoint(move |event: i32| async move {
+                    assert_eq!(event, value);
+                    value
+                })
+                .dispatch(deps![])
+                .await;
 
-        assert!(result == ControlFlow::Break(value));
+            assert!(result == ControlFlow::Break(value));
+        }
     }
 }

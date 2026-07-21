@@ -51,23 +51,23 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    async fn test_endpoint() {
-        let input = 123;
-        let output = 7;
+    crate::cross_test! {
+        async fn test_endpoint() {
+            let input = 123;
+            let output = 7;
 
-        let result = help_inference(endpoint(move |num: i32| async move {
-            assert_eq!(num, input);
-            output
-        }))
-        .dispatch(deps![input])
-        .await;
+            let result = help_inference(endpoint(move |num: i32| async move {
+                assert_eq!(num, input);
+                output
+            }))
+            .dispatch(deps![input])
+            .await;
 
-        let result = match result {
-            ControlFlow::Break(b) => b,
-            _ => panic!("Unexpected: handler return ControlFlow::Break"),
-        };
-        assert_eq!(result, output);
+            let result = match result {
+                ControlFlow::Break(b) => b,
+                _ => panic!("Unexpected: handler return ControlFlow::Break"),
+            };
+            assert_eq!(result, output);
+        }
     }
 }

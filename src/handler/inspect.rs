@@ -93,21 +93,21 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    async fn test_inspect() {
-        let value = 123;
-        let inspect_passed = Arc::new(AtomicBool::new(false));
-        let inspect_passed_cloned = Arc::clone(&inspect_passed);
+    crate::cross_test! {
+        async fn test_inspect() {
+            let value = 123;
+            let inspect_passed = Arc::new(AtomicBool::new(false));
+            let inspect_passed_cloned = Arc::clone(&inspect_passed);
 
-        let result: ControlFlow<(), _> = help_inference(inspect(move |x: i32| {
-            assert_eq!(x, value);
-            inspect_passed_cloned.swap(true, Ordering::Relaxed);
-        }))
-        .dispatch(deps![value])
-        .await;
+            let result: ControlFlow<(), _> = help_inference(inspect(move |x: i32| {
+                assert_eq!(x, value);
+                inspect_passed_cloned.swap(true, Ordering::Relaxed);
+            }))
+            .dispatch(deps![value])
+            .await;
 
-        assert!(matches!(result, ControlFlow::Continue(_)));
-        assert!(inspect_passed.load(Ordering::Relaxed));
+            assert!(matches!(result, ControlFlow::Continue(_)));
+            assert!(inspect_passed.load(Ordering::Relaxed));
+        }
     }
 }
