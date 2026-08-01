@@ -58,6 +58,7 @@ fn not_found_handler() -> WebHandler {
 ## Features
 
  - ✔️ Declarative handlers: `dptree::{endpoint, filter, filter_map, ...}`.
+ - ✔️ Fallible handlers (`try_filter`, `try_map`, `try_filter_map`) that short-circuit a handler chain with an error when the handler output is a `Result`.
  - ✔️ A lightweight functional design without typical OOP hodgepodge.
  - ✔️ [Dependency injection (DI)] out-of-the-box.
  - ✔️ Startup-time [type checking] of run-time dependencies via `dptree::type_check`.
