@@ -9,7 +9,7 @@ struct C;
 #[derive(Clone)]
 struct D;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let h: Handler<D> = dptree::entry().map(|_: A| B).inspect(|_: C| ()).endpoint(|| async { D });
 

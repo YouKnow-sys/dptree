@@ -8,7 +8,7 @@ use std::{
 
 use dptree::prelude::*;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let state = CommandState::Inactive;
 

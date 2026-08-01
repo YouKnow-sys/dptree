@@ -1,19 +1,19 @@
 //! An implementation of the [chain (tree) of responsibility] pattern.
 //!
 //! [[`examples/web_server.rs`](https://github.com/teloxide/dptree/blob/master/examples/web_server.rs)]
-//! ```
+//! ```rust
 //! use dptree::prelude::*;
 //!
 //! type WebHandler = Endpoint<'static, String>;
 //!
 //! #[rustfmt::skip]
-//! #[tokio::main]
+//! #[tokio::main(flavor = "current_thread")]
 //! async fn main() {
 //!     let web_server = dptree::entry()
 //!         .branch(smiles_handler())
 //!         .branch(sqrt_handler())
 //!         .branch(not_found_handler());
-//!     
+//!
 //!     assert_eq!(
 //!         web_server.dispatch(dptree::deps!["/smile"]).await,
 //!         ControlFlow::Break("🙃".to_owned())
@@ -58,6 +58,7 @@ mod handler;
 
 pub mod di;
 pub mod prelude;
+pub mod send;
 
 pub use handler::*;
 
@@ -94,10 +95,10 @@ pub use handler::*;
 ///
 /// ## Examples
 ///
-/// ```
+/// ```rust
 /// use dptree::prelude::*;
 ///
-/// # #[tokio::main]
+/// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
 /// #[derive(Clone)]
 /// enum Command {
@@ -155,6 +156,32 @@ macro_rules! case {
     };
 }
 
+/// Conditionally applies `#[tokio::test]`/`#[test]` for native builds
+/// and `#[wasm_bindgen_test]` for Wasm targets.
+#[cfg(test)]
+macro_rules! cross_test {
+    () => {};
+    ($(#[$($attr:tt)*])* async fn $name:ident() $body:block $($rest:tt)*) => {
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        $(#[$($attr)*])*
+        async fn $name() $body
+
+        crate::cross_test! { $($rest)* }
+    };
+    ($(#[$($attr:tt)*])* fn $name:ident() $body:block $($rest:tt)*) => {
+        #[cfg_attr(not(target_arch = "wasm32"), test)]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        $(#[$($attr)*])*
+        fn $name() $body
+
+        crate::cross_test! { $($rest)* }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use cross_test;
+
 #[cfg(test)]
 mod tests {
     use std::ops::ControlFlow;
@@ -169,89 +196,84 @@ mod tests {
         Other,
     }
 
-    #[tokio::test]
-    async fn handler_empty_variant() {
-        let input = State::A;
-        let h: crate::Handler<_> = case![State::A].endpoint(|| async move { 123 });
+    crate::cross_test! {
+        async fn handler_empty_variant() {
+            let input = State::A;
+            let h: crate::Handler<_> = case![State::A].endpoint(|| async move { 123 });
 
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
-    }
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
 
-    #[tokio::test]
-    async fn handler_single_fn_variant() {
-        let input = State::B(42);
-        let h: crate::Handler<_> = case![State::B(x)].endpoint(|x: i32| async move {
-            assert_eq!(x, 42);
-            123
-        });
-
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
-    }
-
-    #[tokio::test]
-    async fn handler_single_fn_variant_trailing_comma() {
-        let input = State::B(42);
-        let h: crate::Handler<_> = case![State::B(x,)].endpoint(|(x,): (i32,)| async move {
-            assert_eq!(x, 42);
-            123
-        });
-
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
-    }
-
-    #[tokio::test]
-    async fn handler_fn_variant() {
-        let input = State::C(42, "abc");
-        let h: crate::Handler<_> =
-            case![State::C(x, y)].endpoint(|(x, str): (i32, &'static str)| async move {
+        async fn handler_single_fn_variant() {
+            let input = State::B(42);
+            let h: crate::Handler<_> = case![State::B(x)].endpoint(|x: i32| async move {
                 assert_eq!(x, 42);
-                assert_eq!(str, "abc");
                 123
             });
 
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
-    }
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
 
-    #[tokio::test]
-    async fn handler_single_struct_variant() {
-        let input = State::D { foo: 42 };
-        let h: crate::Handler<_> = case![State::D { foo }].endpoint(|x: i32| async move {
-            assert_eq!(x, 42);
-            123
-        });
-
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
-    }
-
-    #[tokio::test]
-    async fn handler_single_struct_variant_trailing_comma() {
-        let input = State::D { foo: 42 };
-        #[rustfmt::skip] // rustfmt removes the trailing comma from `State::D { foo, }`, but it plays a vital role in this test.
-        let h: crate::Handler<_> = case![State::D { foo, }].endpoint(|(x,): (i32,)| async move {
-            assert_eq!(x, 42);
-            123
-        });
-
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
-    }
-
-    #[tokio::test]
-    async fn handler_struct_variant() {
-        let input = State::E { foo: 42, bar: "abc" };
-        let h: crate::Handler<_> =
-            case![State::E { foo, bar }].endpoint(|(x, str): (i32, &'static str)| async move {
+        async fn handler_single_fn_variant_trailing_comma() {
+            let input = State::B(42);
+            let h: crate::Handler<_> = case![State::B(x,)].endpoint(|(x,): (i32,)| async move {
                 assert_eq!(x, 42);
-                assert_eq!(str, "abc");
                 123
             });
 
-        assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
-        assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
+
+        async fn handler_fn_variant() {
+            let input = State::C(42, "abc");
+            let h: crate::Handler<_> =
+                case![State::C(x, y)].endpoint(|(x, str): (i32, &'static str)| async move {
+                    assert_eq!(x, 42);
+                    assert_eq!(str, "abc");
+                    123
+                });
+
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
+
+        async fn handler_single_struct_variant() {
+            let input = State::D { foo: 42 };
+            let h: crate::Handler<_> = case![State::D { foo }].endpoint(|x: i32| async move {
+                assert_eq!(x, 42);
+                123
+            });
+
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
+
+        async fn handler_single_struct_variant_trailing_comma() {
+            let input = State::D { foo: 42 };
+            #[rustfmt::skip] // rustfmt removes the trailing comma from `State::D { foo, }`, but it plays a vital role in this test.
+            let h: crate::Handler<_> = case![State::D { foo, }].endpoint(|(x,): (i32,)| async move {
+                assert_eq!(x, 42);
+                123
+            });
+
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
+
+        async fn handler_struct_variant() {
+            let input = State::E { foo: 42, bar: "abc" };
+            let h: crate::Handler<_> =
+                case![State::E { foo, bar }].endpoint(|(x, str): (i32, &'static str)| async move {
+                    assert_eq!(x, 42);
+                    assert_eq!(str, "abc");
+                    123
+                });
+
+            assert_eq!(h.dispatch(crate::deps![input]).await, ControlFlow::Break(123));
+            assert!(matches!(h.dispatch(crate::deps![State::Other]).await, ControlFlow::Continue(_)));
+        }
     }
 }

@@ -13,7 +13,9 @@
 //! [dependency injection]: https://en.wikipedia.org/wiki/Dependency_injection
 //! [this discussion on StackOverflow]: https://stackoverflow.com/questions/130794/what-is-dependency-injection
 
-use futures::future::{ready, BoxFuture};
+use futures::future::ready;
+
+use crate::send::{BoxFuture, MaybeSend, MaybeSync};
 
 use std::{
     any::{Any, TypeId},
@@ -93,7 +95,7 @@ impl PartialEq for DependencyMap {
     fn eq(&self, other: &Self) -> bool {
         let keys1 = self.map.keys();
         let keys2 = other.map.keys();
-        keys1.len() == keys2.len() && keys1.zip(keys2).map(|(k1, k2)| k1 == k2).all(|x| x)
+        keys1.len() == keys2.len() && keys1.zip(keys2).all(|(k1, k2)| k1 == k2)
     }
 }
 
@@ -201,7 +203,10 @@ where
 }
 
 /// A function with all dependencies satisfied.
+#[cfg(not(target_arch = "wasm32"))]
 pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> BoxFuture<'a, Output> + Send + Sync + 'a>;
+#[cfg(target_arch = "wasm32")]
+pub type CompiledFn<'a, Output> = Arc<dyn Fn() -> BoxFuture<'a, Output> + 'a>;
 
 /// Turns a synchronous function into a type that implements [`Injectable`].
 pub struct Asyncify<F>(pub F);
@@ -210,8 +215,8 @@ macro_rules! impl_into_di {
     ($($generic:ident),*) => {
         impl<Func, Output, Fut, $($generic),*> Injectable<Output, ($($generic,)*)> for Func
         where
-            Func: Fn($($generic),*) -> Fut + Send + Sync + 'static,
-            Fut: Future<Output = Output> + Send + 'static,
+            Func: Fn($($generic),*) -> Fut + MaybeSend + MaybeSync + 'static,
+            Fut: Future<Output = Output> + MaybeSend + 'static,
             Output: 'static,
             $($generic: Clone + Send + Sync + 'static),*
         {
@@ -234,8 +239,8 @@ macro_rules! impl_into_di {
 
         impl<Func, Output, $($generic),*> Injectable<Output, ($($generic,)*)> for Asyncify<Func>
         where
-            Func: Fn($($generic),*) -> Output + Send + Sync + 'static,
-            Output: Send + 'static,
+            Func: Fn($($generic),*) -> Output + MaybeSend + MaybeSync + 'static,
+            Output: MaybeSend + 'static,
             $($generic: Clone + Send + Sync + 'static),*
         {
             #[allow(non_snake_case)]
@@ -306,38 +311,37 @@ macro_rules! deps {
 mod tests {
     use super::*;
 
-    #[test]
-    fn get() {
-        let mut map = DependencyMap::new();
-        map.insert(42i32);
-        map.insert("hello world");
-        map.insert_container(deps![true]);
+    crate::cross_test! {
+        fn get() {
+            let mut map = DependencyMap::new();
+            map.insert(42i32);
+            map.insert("hello world");
+            map.insert_container(deps![true]);
 
-        assert_eq!(map.get(), Arc::new(42i32));
-        assert_eq!(map.get(), Arc::new("hello world"));
-        assert_eq!(map.get(), Arc::new(true));
-    }
+            assert_eq!(map.get(), Arc::new(42i32));
+            assert_eq!(map.get(), Arc::new("hello world"));
+            assert_eq!(map.get(), Arc::new(true));
+        }
 
-    #[test]
-    fn try_get() {
-        let mut map = DependencyMap::new();
-        assert_eq!(map.try_get::<i32>(), None);
-        map.insert(42i32);
-        assert_eq!(map.try_get(), Some(Arc::new(42i32)));
-        assert_eq!(map.try_get::<f32>(), None);
-    }
+        fn try_get() {
+            let mut map = DependencyMap::new();
+            assert_eq!(map.try_get::<i32>(), None);
+            map.insert(42i32);
+            assert_eq!(map.try_get(), Some(Arc::new(42i32)));
+            assert_eq!(map.try_get::<f32>(), None);
+        }
 
-    #[test]
-    fn same_keys() {
-        let mut map_bool1 = DependencyMap::new();
-        let mut map_bool2 = DependencyMap::new();
-        let map_empty = DependencyMap::new();
+        fn same_keys() {
+            let mut map_bool1 = DependencyMap::new();
+            let mut map_bool2 = DependencyMap::new();
+            let map_empty = DependencyMap::new();
 
-        map_bool1.insert(false);
-        map_bool2.insert(true);
+            map_bool1.insert(false);
+            map_bool2.insert(true);
 
-        assert_eq!(map_bool1, map_bool2);
-        assert_ne!(map_bool1, map_empty);
-        assert_ne!(map_bool2, map_empty);
+            assert_eq!(map_bool1, map_bool2);
+            assert_ne!(map_bool1, map_empty);
+            assert_ne!(map_bool2, map_empty);
+        }
     }
 }

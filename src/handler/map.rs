@@ -1,6 +1,8 @@
 use crate::{
     di::{Asyncify, Injectable},
-    from_fn_with_description, Handler, HandlerDescription, HandlerSignature, Type,
+    from_fn_with_description,
+    send::{MaybeSend, MaybeSync},
+    Handler, HandlerDescription, HandlerSignature, Type,
 };
 
 use std::{collections::BTreeSet, iter::FromIterator, ops::ControlFlow, sync::Arc};
@@ -17,7 +19,7 @@ pub fn map<'a, Projection, Output, NewType, Args, Descr>(
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Asyncify<Projection>: Injectable<NewType, Args> + Send + Sync + 'a,
+    Asyncify<Projection>: Injectable<NewType, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
     NewType: Send + Sync + 'static,
@@ -32,7 +34,7 @@ pub fn map_async<'a, Projection, Output, NewType, Args, Descr>(
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Projection: Injectable<NewType, Args> + Send + Sync + 'a,
+    Projection: Injectable<NewType, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
     NewType: Send + Sync + 'static,
@@ -48,7 +50,7 @@ pub fn map_with_description<'a, Projection, Output, NewType, Args, Descr>(
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Asyncify<Projection>: Injectable<NewType, Args> + Send + Sync + 'a,
+    Asyncify<Projection>: Injectable<NewType, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
     NewType: Send + Sync + 'static,
@@ -64,7 +66,7 @@ pub fn map_async_with_description<'a, Projection, Output, NewType, Args, Descr>(
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Projection: Injectable<NewType, Args> + Send + Sync + 'a,
+    Projection: Injectable<NewType, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
     NewType: Send + Sync + 'static,
@@ -103,18 +105,19 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
-    async fn test_map() {
-        let value = 123;
+    crate::cross_test! {
+        async fn test_map() {
+            let value = 123;
 
-        let result = help_inference(map(move || value))
-            .endpoint(move |event: i32| async move {
-                assert_eq!(event, value);
-                value
-            })
-            .dispatch(deps![])
-            .await;
+            let result = help_inference(map(move || value))
+                .endpoint(move |event: i32| async move {
+                    assert_eq!(event, value);
+                    value
+                })
+                .dispatch(deps![])
+                .await;
 
-        assert!(result == ControlFlow::Break(value));
+            assert!(result == ControlFlow::Break(value));
+        }
     }
 }

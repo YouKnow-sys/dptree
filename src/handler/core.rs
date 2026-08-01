@@ -3,7 +3,12 @@
 #[cfg(test)]
 const FIXED_LOCATION: &Location = Location::caller();
 
-use crate::{description, prelude::DependencyMap, HandlerDescription};
+use crate::{
+    description,
+    prelude::DependencyMap,
+    send::{BoxFuture, MaybeSend, MaybeSync},
+    HandlerDescription,
+};
 
 use std::{
     any::TypeId,
@@ -17,7 +22,6 @@ use std::{
 };
 
 use colored::Colorize;
-use futures::future::BoxFuture;
 
 /// An instance that receives an input and decides whether to break a chain or
 /// pass the value further.
@@ -120,12 +124,19 @@ impl Hash for Type {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 type DynFn<'a, Output> =
     dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + Send + Sync + 'a;
+#[cfg(target_arch = "wasm32")]
+type DynFn<'a, Output> = dyn Fn(DependencyMap, Cont<'a, Output>) -> HandlerResult<'a, Output> + 'a;
 
 /// A continuation representing the rest of a handler chain.
-pub type Cont<'a, Output> =
+pub type Cont<'a, Output> = ContInner<'a, Output>;
+#[cfg(not(target_arch = "wasm32"))]
+type ContInner<'a, Output> =
     Box<dyn FnOnce(DependencyMap) -> HandlerResult<'a, Output> + Send + Sync + 'a>;
+#[cfg(target_arch = "wasm32")]
+type ContInner<'a, Output> = Box<dyn FnOnce(DependencyMap) -> HandlerResult<'a, Output> + 'a>;
 
 /// An output type produced by a handler.
 pub type HandlerResult<'a, Output> = BoxFuture<'a, ControlFlow<Output, DependencyMap>>;
@@ -157,7 +168,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # #[tokio::main]
+    /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
     /// use dptree::prelude::*;
     ///
@@ -293,7 +304,7 @@ where
     /// ```
     /// use dptree::prelude::*;
     ///
-    /// # #[tokio::main]
+    /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
     ///
     /// #[derive(Debug, PartialEq)]
@@ -321,7 +332,7 @@ where
     #[track_caller]
     pub fn branch(self, next: Self) -> Self
     where
-        Output: Send,
+        Output: MaybeSend,
     {
         let required_update_kinds_set = self.description().merge_branch(next.description());
 
@@ -416,7 +427,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # #[tokio::main]
+    /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
     /// use dptree::prelude::*;
     ///
@@ -434,8 +445,8 @@ where
     ) -> ControlFlow<Output, DependencyMap>
     where
         Cont: FnOnce(DependencyMap) -> ContFut,
-        Cont: Send + Sync + 'a,
-        ContFut: Future<Output = ControlFlow<Output, DependencyMap>> + Send + 'a,
+        Cont: MaybeSend + MaybeSync + 'a,
+        ContFut: Future<Output = ControlFlow<Output, DependencyMap>> + MaybeSend + 'a,
     {
         (self.data.f)(input, Box::new(|event| Box::pin(cont(event)))).await
     }
@@ -504,8 +515,8 @@ impl Type {
 pub fn from_fn<'a, F, Fut, Output, Descr>(f: F, sig: HandlerSignature) -> Handler<'a, Output, Descr>
 where
     F: Fn(DependencyMap, Cont<'a, Output>) -> Fut,
-    F: Send + Sync + 'a,
-    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + Send + 'a,
+    F: MaybeSend + MaybeSync + 'a,
+    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + MaybeSend + 'a,
     Descr: HandlerDescription,
 {
     from_fn_with_description(Descr::user_defined(), f, sig)
@@ -520,8 +531,8 @@ pub fn from_fn_with_description<'a, F, Fut, Output, Descr>(
 ) -> Handler<'a, Output, Descr>
 where
     F: Fn(DependencyMap, Cont<'a, Output>) -> Fut,
-    F: Send + Sync + 'a,
-    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + Send + 'a,
+    F: MaybeSend + MaybeSync + 'a,
+    Fut: Future<Output = ControlFlow<Output, DependencyMap>> + MaybeSend + 'a,
 {
     Handler {
         data: Arc::new(HandlerData {
@@ -627,13 +638,7 @@ pub fn type_check(sig: &HandlerSignature, container: &DependencyMap, assumptions
                         missing_types_msg.red().bold().to_string()
                     },
                     print_types(
-                        obligations.iter().filter_map(|(ty, _location)| {
-                            if !container_types.contains(ty) {
-                                Some(ty)
-                            } else {
-                                None
-                            }
-                        }),
+                        obligations.keys().filter(|ty| !container_types.contains(ty)),
                         |ty| { format!("`{}` from {}", ty.name, obligations[ty]) },
                     ),
                     note_msg,
@@ -650,6 +655,7 @@ pub(crate) fn help_inference<Output>(h: Handler<Output>) -> Handler<Output> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     use crate::{
@@ -661,305 +667,298 @@ mod tests {
 
     use maplit::{btreemap, btreeset, hashset};
 
-    #[tokio::test]
-    async fn test_from_fn_break() {
-        let input = 123;
-        let output = "ABC";
+    crate::cross_test! {
+        async fn test_from_fn_break() {
+            let input = 123;
+            let output = "ABC";
 
-        let input_types = [Type::of::<i32>()];
-        let location = Location::caller();
+            let input_types = [Type::of::<i32>()];
+            let location = Location::caller();
 
-        let result = help_inference(from_fn(
-            |event, _cont: Cont<&'static str>| async move {
-                assert_eq!(event, deps![input]);
-                ControlFlow::Break(output)
-            },
-            HandlerSignature::Other {
-                obligations: BTreeMap::from_iter(
-                    input_types.iter().cloned().map(|ty| (ty, location)),
-                ),
-                guaranteed_outcomes: btreeset! {},
-                conditional_outcomes: btreeset! {},
-                continues: false,
-            },
-        ))
-        .dispatch(deps![input])
-        .await;
+            let result = help_inference(from_fn(
+                |event, _cont: Cont<&'static str>| async move {
+                    assert_eq!(event, deps![input]);
+                    ControlFlow::Break(output)
+                },
+                HandlerSignature::Other {
+                    obligations: BTreeMap::from_iter(
+                        input_types.iter().cloned().map(|ty| (ty, location)),
+                    ),
+                    guaranteed_outcomes: btreeset! {},
+                    conditional_outcomes: btreeset! {},
+                    continues: false,
+                },
+            ))
+            .dispatch(deps![input])
+            .await;
 
-        assert!(result == ControlFlow::Break(output));
-    }
+            assert!(result == ControlFlow::Break(output));
+        }
 
-    #[tokio::test]
-    async fn test_from_fn_continue() {
-        let input = 123;
-        type Output = &'static str;
+        async fn test_from_fn_continue() {
+            let input = 123;
+            type Output = &'static str;
 
-        let input_types = [Type::of::<i32>()];
-        let location = Location::caller();
+            let input_types = [Type::of::<i32>()];
+            let location = Location::caller();
 
-        let result = help_inference(from_fn(
-            |event, _cont: Cont<&'static str>| async move {
-                assert_eq!(event, deps![input]);
-                ControlFlow::<Output, _>::Continue(event)
-            },
-            HandlerSignature::Other {
-                obligations: BTreeMap::from_iter(
-                    input_types.iter().cloned().map(|ty| (ty, location)),
-                ),
-                guaranteed_outcomes: btreeset! {Type::of::<i32>()},
-                conditional_outcomes: btreeset! {},
-                continues: true,
-            },
-        ))
-        .dispatch(deps![input])
-        .await;
+            let result = help_inference(from_fn(
+                |event, _cont: Cont<&'static str>| async move {
+                    assert_eq!(event, deps![input]);
+                    ControlFlow::<Output, _>::Continue(event)
+                },
+                HandlerSignature::Other {
+                    obligations: BTreeMap::from_iter(
+                        input_types.iter().cloned().map(|ty| (ty, location)),
+                    ),
+                    guaranteed_outcomes: btreeset! {Type::of::<i32>()},
+                    conditional_outcomes: btreeset! {},
+                    continues: true,
+                },
+            ))
+            .dispatch(deps![input])
+            .await;
 
-        assert!(result == ControlFlow::Continue(deps![input]));
-    }
+            assert!(result == ControlFlow::Continue(deps![input]));
+        }
 
-    #[tokio::test]
-    async fn test_entry() {
-        let input = 123;
-        type Output = &'static str;
+        async fn test_entry() {
+            let input = 123;
+            type Output = &'static str;
 
-        let result = help_inference(entry::<Output, _>()).dispatch(deps![input]).await;
+            let result = help_inference(entry::<Output, _>()).dispatch(deps![input]).await;
 
-        assert!(result == ControlFlow::Continue(deps![input]));
-    }
+            assert!(result == ControlFlow::Continue(deps![input]));
+        }
 
-    #[tokio::test]
-    async fn test_execute() {
-        let input = 123;
-        let output = "ABC";
+        async fn test_execute() {
+            let input = 123;
+            let output = "ABC";
 
-        let input_types = [Type::of::<i32>()];
-        let location = Location::caller();
+            let input_types = [Type::of::<i32>()];
+            let location = Location::caller();
 
-        let result = help_inference(from_fn(
-            |event, cont| {
+            let result = help_inference(from_fn(
+                |event, cont| {
+                    assert!(event == deps![input]);
+                    cont(event)
+                },
+                HandlerSignature::Other {
+                    obligations: BTreeMap::from_iter(
+                        input_types.iter().cloned().map(|ty| (ty, location)),
+                    ),
+                    guaranteed_outcomes: btreeset! {Type::of::<i32>()},
+                    conditional_outcomes: btreeset! {},
+                    continues: true,
+                },
+            ))
+            .execute(deps![input], |event| async move {
                 assert!(event == deps![input]);
-                cont(event)
-            },
-            HandlerSignature::Other {
-                obligations: BTreeMap::from_iter(
-                    input_types.iter().cloned().map(|ty| (ty, location)),
-                ),
-                guaranteed_outcomes: btreeset! {Type::of::<i32>()},
-                conditional_outcomes: btreeset! {},
-                continues: true,
-            },
-        ))
-        .execute(deps![input], |event| async move {
-            assert!(event == deps![input]);
-            ControlFlow::Break(output)
-        })
-        .await;
-
-        assert!(result == ControlFlow::Break(output));
-    }
-
-    #[tokio::test]
-    async fn test_deeply_nested_tree() {
-        #[derive(Debug, PartialEq)]
-        enum Output {
-            LT,
-            MinusOne,
-            Zero,
-            One,
-            GT,
-        }
-
-        let negative_handler = filter(|num: i32| num < 0)
-            .branch(
-                filter_async(|num: i32| async move { num == -1 })
-                    .endpoint(|| async move { Output::MinusOne }),
-            )
-            .branch(endpoint(|| async move { Output::LT }));
-
-        let zero_handler = filter_async(|num: i32| async move { num == 0 })
-            .endpoint(|| async move { Output::Zero });
-
-        let positive_handler = filter_async(|num: i32| async move { num > 0 })
-            .branch(
-                filter_async(|num: i32| async move { num == 1 })
-                    .endpoint(|| async move { Output::One }),
-            )
-            .branch(endpoint(|| async move { Output::GT }));
-
-        let dispatcher = help_inference(entry())
-            .branch(negative_handler)
-            .branch(zero_handler)
-            .branch(positive_handler);
-
-        assert_eq!(dispatcher.dispatch(deps![2]).await, ControlFlow::Break(Output::GT));
-        assert_eq!(dispatcher.dispatch(deps![1]).await, ControlFlow::Break(Output::One));
-        assert_eq!(dispatcher.dispatch(deps![0]).await, ControlFlow::Break(Output::Zero));
-        assert_eq!(dispatcher.dispatch(deps![-1]).await, ControlFlow::Break(Output::MinusOne));
-        assert_eq!(dispatcher.dispatch(deps![-2]).await, ControlFlow::Break(Output::LT));
-    }
-
-    #[tokio::test]
-    async fn allowed_updates() {
-        use crate::description::{EventKind, InterestSet};
-        use UpdateKind::*;
-
-        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-        enum UpdateKind {
-            A,
-            B,
-            C,
-        }
-
-        impl EventKind for UpdateKind {
-            fn full_set() -> HashSet<Self> {
-                hashset! { A, B, C }
-            }
-
-            fn empty_set() -> HashSet<Self> {
-                hashset! {}
-            }
-        }
-
-        #[derive(Clone)]
-        #[allow(dead_code)]
-        enum Update {
-            A(i32),
-            B(u8),
-            C(u64),
-        }
-
-        fn filter_a<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
-        where
-            Out: Send + Sync + 'static,
-        {
-            filter_map_with_description(
-                InterestSet::new_filter(hashset! { A }),
-                |update: Update| match update {
-                    Update::A(x) => Some(x),
-                    _ => None,
-                },
-            )
-        }
-
-        fn filter_b<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
-        where
-            Out: Send + Sync + 'static,
-        {
-            filter_map_with_description(
-                InterestSet::new_filter(hashset! { B }),
-                |update: Update| match update {
-                    Update::B(x) => Some(x),
-                    _ => None,
-                },
-            )
-        }
-
-        fn filter_c<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
-        where
-            Out: Send + Sync + 'static,
-        {
-            filter_map_with_description(
-                InterestSet::new_filter(hashset! { C }),
-                |update: Update| match update {
-                    Update::B(x) => Some(x),
-                    _ => None,
-                },
-            )
-        }
-
-        // User-defined filter that doesn't provide allowed updates
-        fn user_defined_filter<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
-        where
-            Out: Send + Sync + 'static,
-        {
-            filter_map(|update: Update| match update {
-                Update::B(x) => Some(x),
-                _ => None,
+                ControlFlow::Break(output)
             })
+            .await;
+
+            assert!(result == ControlFlow::Break(output));
         }
 
-        #[track_caller]
-        fn assert(
-            handler: Handler<'static, (), description::InterestSet<UpdateKind>>,
-            allowed: HashSet<UpdateKind>,
-        ) {
-            assert_eq!(handler.description().observed, allowed);
+        async fn test_deeply_nested_tree() {
+            #[derive(Debug, PartialEq)]
+            enum Output {
+                LT,
+                MinusOne,
+                Zero,
+                One,
+                GT,
+            }
+
+            let negative_handler = filter(|num: i32| num < 0)
+                .branch(
+                    filter_async(|num: i32| async move { num == -1 })
+                        .endpoint(|| async move { Output::MinusOne }),
+                )
+                .branch(endpoint(|| async move { Output::LT }));
+
+            let zero_handler = filter_async(|num: i32| async move { num == 0 })
+                .endpoint(|| async move { Output::Zero });
+
+            let positive_handler = filter_async(|num: i32| async move { num > 0 })
+                .branch(
+                    filter_async(|num: i32| async move { num == 1 })
+                        .endpoint(|| async move { Output::One }),
+                )
+                .branch(endpoint(|| async move { Output::GT }));
+
+            let dispatcher = help_inference(entry())
+                .branch(negative_handler)
+                .branch(zero_handler)
+                .branch(positive_handler);
+
+            assert_eq!(dispatcher.dispatch(deps![2]).await, ControlFlow::Break(Output::GT));
+            assert_eq!(dispatcher.dispatch(deps![1]).await, ControlFlow::Break(Output::One));
+            assert_eq!(dispatcher.dispatch(deps![0]).await, ControlFlow::Break(Output::Zero));
+            assert_eq!(dispatcher.dispatch(deps![-1]).await, ControlFlow::Break(Output::MinusOne));
+            assert_eq!(dispatcher.dispatch(deps![-2]).await, ControlFlow::Break(Output::LT));
         }
 
-        // Filters do not observe anything on their own.
-        assert(filter_a(), hashset! {});
-        assert(entry().chain(filter_b()), hashset! {});
-        assert(filter_a().chain(filter_b()), hashset! {});
-        assert(filter_a().branch(filter_b()), hashset! {});
-        assert(filter_a().branch(filter_b()).branch(filter_c().chain(filter_c())), hashset! {});
+        async fn allowed_updates() {
+            use crate::description::{EventKind, InterestSet};
+            use UpdateKind::*;
 
-        // Anything user-defined observes everything that it can observe.
-        assert(filter_a().chain(filter(|| true)), hashset! { A });
-        assert(user_defined_filter().chain(filter_a()), hashset! { A, B, C });
-        assert(filter_a().chain(user_defined_filter()), hashset! { A });
-        assert(
-            entry().branch(filter_a()).branch(filter_b()).chain(user_defined_filter()),
-            hashset! { A, B, C },
-        );
-        assert(
-            entry()
-                .branch(filter_a().endpoint(|| async {}))
-                .branch(filter_b().endpoint(|| async {})),
-            hashset! { A, B },
-        );
-        assert(user_defined_filter(), hashset! { A, B, C });
-        assert(user_defined_filter().branch(filter_a()), hashset! { A, B, C });
+            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+            enum UpdateKind {
+                A,
+                B,
+                C,
+            }
 
-        // An entry is "invisible".
-        assert(entry(), hashset! {});
-        assert(entry().chain(filter_a().endpoint(|| async {})), hashset! { A });
-        assert(entry().branch(filter_a()), hashset! {});
+            impl EventKind for UpdateKind {
+                fn full_set() -> HashSet<Self> {
+                    hashset! { A, B, C }
+                }
 
-        // Chained non-overlapping filters do not allow anything.
-        assert(filter_a().chain(filter_b()).endpoint(|| async {}), hashset! {});
-    }
+                fn empty_set() -> HashSet<Self> {
+                    hashset! {}
+                }
+            }
 
-    #[tokio::test]
-    async fn type_check_success() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-        #[derive(Clone)]
-        struct C;
+            #[derive(Clone)]
+            #[allow(dead_code)]
+            enum Update {
+                A(i32),
+                B(u8),
+                C(u64),
+            }
 
-        macro_rules! test {
-            ($($key:ty),*) => {
-                type_check(
-                    &HandlerSignature::Other {
-                        obligations: btreemap! {
-                            $(Type::of::<$key>() => Location::caller(),)*
-                        },
-                        guaranteed_outcomes: btreeset! {},
-                        conditional_outcomes: btreeset! {},
-                        continues: true,
+            fn filter_a<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
+            where
+                Out: Send + Sync + 'static,
+            {
+                filter_map_with_description(
+                    InterestSet::new_filter(hashset! { A }),
+                    |update: Update| match update {
+                        Update::A(x) => Some(x),
+                        _ => None,
                     },
-                    &deps![A, B, C],
-                    &[],
-                );
-            };
+                )
+            }
+
+            fn filter_b<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
+            where
+                Out: Send + Sync + 'static,
+            {
+                filter_map_with_description(
+                    InterestSet::new_filter(hashset! { B }),
+                    |update: Update| match update {
+                        Update::B(x) => Some(x),
+                        _ => None,
+                    },
+                )
+            }
+
+            fn filter_c<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
+            where
+                Out: Send + Sync + 'static,
+            {
+                filter_map_with_description(
+                    InterestSet::new_filter(hashset! { C }),
+                    |update: Update| match update {
+                        Update::B(x) => Some(x),
+                        _ => None,
+                    },
+                )
+            }
+
+            // User-defined filter that doesn't provide allowed updates
+            fn user_defined_filter<Out>() -> Handler<'static, Out, InterestSet<UpdateKind>>
+            where
+                Out: Send + Sync + 'static,
+            {
+                filter_map(|update: Update| match update {
+                    Update::B(x) => Some(x),
+                    _ => None,
+                })
+            }
+
+            #[track_caller]
+            fn assert(
+                handler: Handler<'static, (), description::InterestSet<UpdateKind>>,
+                allowed: HashSet<UpdateKind>,
+            ) {
+                assert_eq!(handler.description().observed, allowed);
+            }
+
+            // Filters do not observe anything on their own.
+            assert(filter_a(), hashset! {});
+            assert(entry().chain(filter_b()), hashset! {});
+            assert(filter_a().chain(filter_b()), hashset! {});
+            assert(filter_a().branch(filter_b()), hashset! {});
+            assert(filter_a().branch(filter_b()).branch(filter_c().chain(filter_c())), hashset! {});
+
+            // Anything user-defined observes everything that it can observe.
+            assert(filter_a().chain(filter(|| true)), hashset! { A });
+            assert(user_defined_filter().chain(filter_a()), hashset! { A, B, C });
+            assert(filter_a().chain(user_defined_filter()), hashset! { A });
+            assert(
+                entry().branch(filter_a()).branch(filter_b()).chain(user_defined_filter()),
+                hashset! { A, B, C },
+            );
+            assert(
+                entry()
+                    .branch(filter_a().endpoint(|| async {}))
+                    .branch(filter_b().endpoint(|| async {})),
+                hashset! { A, B },
+            );
+            assert(user_defined_filter(), hashset! { A, B, C });
+            assert(user_defined_filter().branch(filter_a()), hashset! { A, B, C });
+
+            // An entry is "invisible".
+            assert(entry(), hashset! {});
+            assert(entry().chain(filter_a().endpoint(|| async {})), hashset! { A });
+            assert(entry().branch(filter_a()), hashset! {});
+
+            // Chained non-overlapping filters do not allow anything.
+            assert(filter_a().chain(filter_b()).endpoint(|| async {}), hashset! {});
         }
 
-        // Type-checking an entry must succeed.
-        type_check(&HandlerSignature::Entry, &deps![], &[]);
+        async fn type_check_success() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+            #[derive(Clone)]
+            struct C;
 
-        // Type-checking subsets of provided types must succeed.
-        test!(A, B, C);
-        test!(A, B);
-        test!(A, C);
-        test!(B, C);
-        test!(A);
-        test!(B);
-        test!(C);
-    }
+            macro_rules! test {
+                ($($key:ty),*) => {
+                    type_check(
+                        &HandlerSignature::Other {
+                            obligations: btreemap! {
+                                $(Type::of::<$key>() => Location::caller(),)*
+                            },
+                            guaranteed_outcomes: btreeset! {},
+                            conditional_outcomes: btreeset! {},
+                            continues: true,
+                        },
+                        &deps![A, B, C],
+                        &[],
+                    );
+                };
+            }
 
-    #[test]
-    #[should_panic(expected = "Your handler accepts the following types:
+            // Type-checking an entry must succeed.
+            type_check(&HandlerSignature::Entry, &deps![], &[]);
+
+            // Type-checking subsets of provided types must succeed.
+            test!(A, B, C);
+            test!(A, B);
+            test!(A, C);
+            test!(B, C);
+            test!(A);
+            test!(B);
+            test!(C);
+        }
+
+        #[should_panic(expected = "Your handler accepts the following types:
     `dptree::handler::core::tests::type_check_panic::A`
     `dptree::handler::core::tests::type_check_panic::B`
     `dptree::handler::core::tests::type_check_panic::C`
@@ -971,376 +970,359 @@ The missing values are:
 
 Make sure all the required values are provided to the handler. For more information, visit <https://docs.rs/dptree/latest/dptree>.
 ")]
-    fn type_check_panic() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-        #[derive(Clone)]
-        struct C;
+        fn type_check_panic() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+            #[derive(Clone)]
+            struct C;
 
-        type_check(
-            &HandlerSignature::Other {
-                obligations: btreemap! {
-                    Type::of::<A>() => Location::caller(),
-                    Type::of::<B>() => Location::caller(),
-                    Type::of::<C>() => FIXED_LOCATION,
+            type_check(
+                &HandlerSignature::Other {
+                    obligations: btreemap! {
+                        Type::of::<A>() => Location::caller(),
+                        Type::of::<B>() => Location::caller(),
+                        Type::of::<C>() => FIXED_LOCATION,
+                    },
+                    guaranteed_outcomes: btreeset! {},
+                    conditional_outcomes: btreeset! {},
+                    continues: true,
                 },
-                guaranteed_outcomes: btreeset! {},
-                conditional_outcomes: btreeset! {},
-                continues: true,
-            },
-            // `C` is required but not provided.
-            &deps![A, B],
-            &[],
-        );
-    }
-
-    #[test]
-    fn type_eq_ord_consistent() {
-        #[derive(Clone)]
-        struct A;
-
-        let ta1 = Type { id: A.type_id(), name: "A1" };
-        let ta2 = Type { id: A.type_id(), name: "A2" };
-
-        assert!(!(ta1 == ta2));
-        assert!(ta1 < ta2);
-        assert!(!(ta1 > ta2));
-    }
-
-    #[test]
-    fn type_btreeset_not_contains_duplicate_name() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-
-        let ta = Type { id: A.type_id(), name: "DuplicateName" };
-        let tb = Type { id: B.type_id(), name: "DuplicateName" };
-        let set = btreeset! {ta};
-
-        assert!(ta != tb);
-        assert!(!set.contains(&tb));
-    }
-
-    #[tokio::test]
-    async fn type_infer_check_chained_combinators() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-        #[derive(Clone)]
-        struct C;
-        #[derive(Clone)]
-        struct D;
-        #[derive(Clone)]
-        struct E;
-        #[derive(Clone)]
-        struct F;
-        #[derive(Clone)]
-        struct G;
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct H;
-
-        let h: Handler<H> = entry()
-            .map(|/* In the final input types. */ _: A| B)
-            .inspect(
-                |/* This type must be removed from the final input types because it is
-                  * provided by the `.map` above. */
-                 _: B,
-                 /* This type must "propagate" to the final input types. */
-                 _: E| (),
-            )
-            .filter_map(|/* In the final input types. */ _: C| Some(D))
-            .filter(
-                |/* This type is provided by the `.filter_map` above. */ _: D,
-                 /* Must propagate. */ _: F| true,
-            )
-            .endpoint(
-                /* `B` and `D` are provided at this point. */
-                |_: B, _: D, /* Must propagate. */ _: G| async { H },
+                // `C` is required but not provided.
+                &deps![A, B],
+                &[],
             );
-
-        let input_types =
-            [Type::of::<A>(), Type::of::<C>(), Type::of::<E>(), Type::of::<F>(), Type::of::<G>()];
-        let outcomes = btreeset! {Type::of::<B>(), Type::of::<D>()};
-
-        if let HandlerSignature::Other {
-            obligations: actual_obligations,
-            guaranteed_outcomes: actual_guaranteed_outcomes,
-            conditional_outcomes: actual_conditional_outcomes,
-            continues: _continues,
-        } = h.sig()
-        {
-            assert_eq!(
-                actual_obligations.keys().collect::<Vec<_>>(),
-                input_types.iter().collect::<Vec<_>>()
-            );
-            let all_outcomes = actual_guaranteed_outcomes
-                .union(actual_conditional_outcomes)
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            assert_eq!(all_outcomes, outcomes);
-        } else {
-            panic!("Expected `HandlerSignature::Other`");
         }
 
-        let deps = deps![A, C, E, F, G];
+        fn type_eq_ord_consistent() {
+            #[derive(Clone)]
+            struct A;
 
-        type_check(h.sig(), &deps, &[]);
+            let ta1 = Type { id: A.type_id(), name: "A1" };
+            let ta2 = Type { id: A.type_id(), name: "A2" };
 
-        // Must not panic during execution.
-        assert_eq!(h.dispatch(deps).await, ControlFlow::Break(H));
-    }
-
-    #[tokio::test]
-    async fn type_infer_check_branched_combinators() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-        #[derive(Clone)]
-        struct C;
-        #[derive(Clone)]
-        struct D;
-        #[derive(Clone)]
-        struct E;
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct F;
-
-        let h: Handler<F> = entry()
-            .branch(
-                crate::inspect(|_: A| ()).map(|| B).map(|| C).map(|| D).endpoint(|| async { F }),
-            )
-            .branch(crate::inspect(|_: E| ()).map(|| B).map(|| D).endpoint(|| async { F }));
-
-        // The union of the input types of both branches.
-        let input_types = btreeset! {Type::of::<A>(), Type::of::<E>()};
-        // Both branches provide different guaranteed outcomes.
-        let output_types = btreeset! {Type::of::<B>(), Type::of::<C>(), Type::of::<D>()};
-
-        if let HandlerSignature::Other {
-            obligations: actual_obligations,
-            guaranteed_outcomes: actual_guaranteed_outcomes,
-            conditional_outcomes: actual_conditional_outcomes,
-            continues: _continues,
-        } = h.sig()
-        {
-            assert_eq!(
-                actual_obligations.keys().collect::<Vec<_>>(),
-                input_types.iter().collect::<Vec<_>>()
-            );
-            let all_outcomes = actual_guaranteed_outcomes
-                .union(actual_conditional_outcomes)
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            assert_eq!(all_outcomes, output_types);
-        } else {
-            panic!("Expected `HandlerSignature::Other`");
+            assert!(!(ta1 == ta2));
+            assert!(ta1 < ta2);
+            assert!(!(ta1 > ta2));
         }
 
-        let deps = deps![A, E];
+        fn type_btreeset_not_contains_duplicate_name() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
 
-        type_check(h.sig(), &deps, &[]);
+            let ta = Type { id: A.type_id(), name: "DuplicateName" };
+            let tb = Type { id: B.type_id(), name: "DuplicateName" };
+            let set = btreeset! {ta};
 
-        // Must not panic during execution.
-        assert_eq!(h.dispatch(deps).await, ControlFlow::Break(F));
-    }
+            assert!(ta != tb);
+            assert!(!set.contains(&tb));
+        }
 
-    #[tokio::test]
-    async fn obligations_priority() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct C;
+        async fn type_infer_check_chained_combinators() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+            #[derive(Clone)]
+            struct C;
+            #[derive(Clone)]
+            struct D;
+            #[derive(Clone)]
+            struct E;
+            #[derive(Clone)]
+            struct F;
+            #[derive(Clone)]
+            struct G;
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            struct H;
 
-        fn test<T: 'static>(h: Handler<C>, column: u32) {
+            let h: Handler<H> = entry()
+                .map(|/* In the final input types. */ _: A| B)
+                .inspect(
+                    |/* This type must be removed from the final input types because it is
+                    * provided by the `.map` above. */
+                    _: B,
+                    /* This type must "propagate" to the final input types. */
+                    _: E| (),
+                )
+                .filter_map(|/* In the final input types. */ _: C| Some(D))
+                .filter(
+                    |/* This type is provided by the `.filter_map` above. */ _: D,
+                    /* Must propagate. */ _: F| true,
+                )
+                .endpoint(
+                    /* `B` and `D` are provided at this point. */
+                    |_: B, _: D, /* Must propagate. */ _: G| async { H },
+                );
+
+            let input_types =
+                [Type::of::<A>(), Type::of::<C>(), Type::of::<E>(), Type::of::<F>(), Type::of::<G>()];
+            let outcomes = btreeset! {Type::of::<B>(), Type::of::<D>()};
+
             if let HandlerSignature::Other {
-                obligations,
-                guaranteed_outcomes: _,
-                conditional_outcomes: _,
-                continues: _,
+                obligations: actual_obligations,
+                guaranteed_outcomes: actual_guaranteed_outcomes,
+                conditional_outcomes: actual_conditional_outcomes,
+                continues: _continues,
             } = h.sig()
             {
-                let (_ty, &location) = obligations
-                    .iter()
-                    .find(|(ty, _location)| ty.id == TypeId::of::<T>())
-                    .expect("Missing obligation");
-                assert_eq!(location.column(), column);
+                assert_eq!(
+                    actual_obligations.keys().collect::<Vec<_>>(),
+                    input_types.iter().collect::<Vec<_>>()
+                );
+                let all_outcomes = actual_guaranteed_outcomes
+                    .union(actual_conditional_outcomes)
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(all_outcomes, outcomes);
             } else {
                 panic!("Expected `HandlerSignature::Other`");
             }
+
+            let deps = deps![A, C, E, F, G];
+
+            type_check(h.sig(), &deps, &[]);
+
+            // Must not panic during execution.
+            assert_eq!(h.dispatch(deps).await, ControlFlow::Break(H));
         }
 
-        #[rustfmt::skip]
-        let h: Handler<C> = entry().map(|_: A| ()).endpoint(|_: A, _: B| async { C });
-        test::<A>(h, 37);
+        async fn type_infer_check_branched_combinators() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+            #[derive(Clone)]
+            struct C;
+            #[derive(Clone)]
+            struct D;
+            #[derive(Clone)]
+            struct E;
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            struct F;
 
-        #[rustfmt::skip]
-        let h: Handler<C> =
-            entry().branch(crate::map(|_: A|  { C })).branch(endpoint(|_: A, _: B| async { C }));
-        test::<A>(h, 28);
-    }
+            let h: Handler<F> = entry()
+                .branch(
+                    crate::inspect(|_: A| ()).map(|| B).map(|| C).map(|| D).endpoint(|| async { F }),
+                )
+                .branch(crate::inspect(|_: E| ()).map(|| B).map(|| D).endpoint(|| async { F }));
 
-    #[test]
-    #[should_panic(expected = "Ill-typed handler chain: the second handler cannot be an entry")]
-    fn chain_entry() {
-        let _: Handler<()> = entry().chain(entry());
-    }
+            // The union of the input types of both branches.
+            let input_types = btreeset! {Type::of::<A>(), Type::of::<E>()};
+            // Both branches provide different guaranteed outcomes.
+            let output_types = btreeset! {Type::of::<B>(), Type::of::<C>(), Type::of::<D>()};
 
-    #[test]
-    #[should_panic(expected = "Ill-typed handler branch: the second handler cannot be an entry")]
-    fn branch_entry() {
-        let _: Handler<()> = entry().branch(entry());
-    }
+            if let HandlerSignature::Other {
+                obligations: actual_obligations,
+                guaranteed_outcomes: actual_guaranteed_outcomes,
+                conditional_outcomes: actual_conditional_outcomes,
+                continues: _continues,
+            } = h.sig()
+            {
+                assert_eq!(
+                    actual_obligations.keys().collect::<Vec<_>>(),
+                    input_types.iter().collect::<Vec<_>>()
+                );
+                let all_outcomes = actual_guaranteed_outcomes
+                    .union(actual_conditional_outcomes)
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(all_outcomes, output_types);
+            } else {
+                panic!("Expected `HandlerSignature::Other`");
+            }
 
-    #[tokio::test]
-    async fn chain_branch_type_check() {
-        #[derive(Clone)]
-        struct A;
+            let deps = deps![A, E];
 
-        let handler: Handler<()> =
-            entry().chain(crate::map(|| A)).branch(endpoint(|_: A| async {}));
+            type_check(h.sig(), &deps, &[]);
 
-        let _no_panic_here: ControlFlow<(), _> = handler.dispatch(deps![]).await;
+            // Must not panic during execution.
+            assert_eq!(h.dispatch(deps).await, ControlFlow::Break(F));
+        }
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+        async fn obligations_priority() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+            #[derive(Clone, Debug, Eq, PartialEq)]
+            struct C;
 
-    #[tokio::test]
-    async fn guaranteed_outcomes_chain_success() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
+            fn test<T: 'static>(h: Handler<C>, column: u32) {
+                if let HandlerSignature::Other {
+                    obligations,
+                    guaranteed_outcomes: _,
+                    conditional_outcomes: _,
+                    continues: _,
+                } = h.sig()
+                {
+                    let (_ty, &location) = obligations
+                        .iter()
+                        .find(|(ty, _location)| ty.id == TypeId::of::<T>())
+                        .expect("Missing obligation");
+                    assert_eq!(location.column(), column);
+                } else {
+                    panic!("Expected `HandlerSignature::Other`");
+                }
+            }
 
-        let handler: Handler<()> = entry().map(|| A).map(|_: A| B).endpoint(|_: B| async {});
+            #[rustfmt::skip]
+            let h: Handler<C> = entry().map(|_: A| ()).endpoint(|_: A, _: B| async { C });
+            test::<A>(h, 41);
 
-        let result = handler.dispatch(deps![]).await;
-        assert_eq!(result, ControlFlow::Break(()));
+            #[rustfmt::skip]
+            let h: Handler<C> =
+                entry().branch(crate::map(|_: A|  { C })).branch(endpoint(|_: A, _: B| async { C }));
+            test::<A>(h, 32);
+        }
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+        #[should_panic(expected = "Ill-typed handler chain: the second handler cannot be an entry")]
+        fn chain_entry() {
+            let _: Handler<()> = entry().chain(entry());
+        }
 
-    #[tokio::test]
-    async fn conditional_outcomes_chain_success() {
-        #[derive(Clone)]
-        struct A;
+        #[should_panic(expected = "Ill-typed handler branch: the second handler cannot be an entry")]
+        fn branch_entry() {
+            let _: Handler<()> = entry().branch(entry());
+        }
 
-        let handler: Handler<()> = entry().filter_map(|| Some(A)).endpoint(|_: A| async {});
+        async fn chain_branch_type_check() {
+            #[derive(Clone)]
+            struct A;
 
-        let result = handler.dispatch(deps![]).await;
-        assert_eq!(result, ControlFlow::Break(()));
+            let handler: Handler<()> =
+                entry().chain(crate::map(|| A)).branch(endpoint(|_: A| async {}));
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+            let _no_panic_here: ControlFlow<(), _> = handler.dispatch(deps![]).await;
 
-    #[tokio::test]
-    async fn guaranteed_outcomes_branch_success() {
-        #[derive(Clone)]
-        struct A;
+            type_check(handler.sig(), &deps![], &[]);
+        }
 
-        let producer = entry().map(|| A);
+        async fn guaranteed_outcomes_chain_success() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
 
-        // In branch context, guaranteed outcomes can satisfy obligations.
-        let handler: Handler<()> = producer.branch(endpoint(|_: A| async {}));
+            let handler: Handler<()> = entry().map(|| A).map(|_: A| B).endpoint(|_: B| async {});
 
-        let result = handler.dispatch(deps![]).await;
-        assert_eq!(result, ControlFlow::Break(()));
+            let result = handler.dispatch(deps![]).await;
+            assert_eq!(result, ControlFlow::Break(()));
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+            type_check(handler.sig(), &deps![], &[]);
+        }
 
-    #[tokio::test]
-    async fn mixed_outcomes_chain() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
-        #[derive(Clone)]
-        struct C;
+        async fn conditional_outcomes_chain_success() {
+            #[derive(Clone)]
+            struct A;
 
-        let handler: Handler<()> = entry()
-            .map(|| A) // guaranteed
-            .filter_map(|_: A| Some(B)) // conditional, but `A` is guaranteed
-            .map(|_: B| C) // guaranteed, but `B` is conditional
-            .endpoint(|_: C| async {}); // consumes `C`
+            let handler: Handler<()> = entry().filter_map(|| Some(A)).endpoint(|_: A| async {});
 
-        let result = handler.dispatch(deps![]).await;
-        assert_eq!(result, ControlFlow::Break(()));
+            let result = handler.dispatch(deps![]).await;
+            assert_eq!(result, ControlFlow::Break(()));
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+            type_check(handler.sig(), &deps![], &[]);
+        }
 
-    #[tokio::test]
-    async fn branch_with_guaranteed_continuation() {
-        #[derive(Clone)]
-        struct A;
+        async fn guaranteed_outcomes_branch_success() {
+            #[derive(Clone)]
+            struct A;
 
-        // The first branch produces `A` and continues (`map` always continues).
-        let first_branch = entry().map(|| A).inspect(|_: A| ()); // `inspect` continues, keeping `A` available
+            let producer = entry().map(|| A);
 
-        // The second branch can use `A`, because the first branch guarantees it and
-        // continues the execution.
-        let handler: Handler<()> = first_branch.branch(endpoint(|_: A| async {}));
+            // In branch context, guaranteed outcomes can satisfy obligations.
+            let handler: Handler<()> = producer.branch(endpoint(|_: A| async {}));
 
-        let result = handler.dispatch(deps![]).await;
-        assert_eq!(result, ControlFlow::Break(()));
+            let result = handler.dispatch(deps![]).await;
+            assert_eq!(result, ControlFlow::Break(()));
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+            type_check(handler.sig(), &deps![], &[]);
+        }
 
-    #[tokio::test]
-    #[should_panic(expected = "Your handler accepts the following types:")]
-    async fn deeply_nested_conditional_failure() {
-        #[derive(Clone)]
-        struct A;
-        #[derive(Clone)]
-        struct B;
+        async fn mixed_outcomes_chain() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+            #[derive(Clone)]
+            struct C;
 
-        // Deep nesting where conditional outcome propagation should fail.
-        let handler: Handler<()> = entry()
-            .branch(
-                entry()
-                    .branch(crate::filter_map(|| Some(A)).endpoint(|| async {}))
-                    .branch(crate::filter_map(|_: A| Some(B)).endpoint(|| async {})),
-            )
-            .branch(endpoint(|_: B| async {})); // `B` is not guaranteed to be available
+            let handler: Handler<()> = entry()
+                .map(|| A) // guaranteed
+                .filter_map(|_: A| Some(B)) // conditional, but `A` is guaranteed
+                .map(|_: B| C) // guaranteed, but `B` is conditional
+                .endpoint(|_: C| async {}); // consumes `C`
 
-        type_check(handler.sig(), &deps![], &[]);
-    }
+            let result = handler.dispatch(deps![]).await;
+            assert_eq!(result, ControlFlow::Break(()));
 
-    #[test]
-    #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
-                               second handler will never be called.")]
-    fn chain_endpoint_with_handler() {
-        let _: Handler<()> = endpoint(|| async {}).endpoint(|| async {});
-    }
+            type_check(handler.sig(), &deps![], &[]);
+        }
 
-    #[test]
-    #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
-                               second handler will never be called.")]
-    fn chain_endpoint_with_filter() {
-        let _: Handler<()> = endpoint(|| async {}).filter(|_: i32| true);
-    }
+        async fn branch_with_guaranteed_continuation() {
+            #[derive(Clone)]
+            struct A;
 
-    #[test]
-    #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
-                               second handler will never be called.")]
-    fn chain_endpoint_with_map() {
-        let _: Handler<()> = endpoint(|| async {}).map(|| 42);
-    }
+            // The first branch produces `A` and continues (`map` always continues).
+            let first_branch = entry().map(|| A).inspect(|_: A| ()); // `inspect` continues, keeping `A` available
 
-    #[test]
-    #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
-                               second handler will never be called.")]
-    fn chain_complex_endpoint_dead_code() {
-        let _: Handler<()> = entry()
-            .chain(filter(|x: i32| x > 0))
-            .chain(endpoint(|| async {}))
-            .chain(crate::map(|| "Unreachable"));
+            // The second branch can use `A`, because the first branch guarantees it and
+            // continues the execution.
+            let handler: Handler<()> = first_branch.branch(endpoint(|_: A| async {}));
+
+            let result = handler.dispatch(deps![]).await;
+            assert_eq!(result, ControlFlow::Break(()));
+
+            type_check(handler.sig(), &deps![], &[]);
+        }
+
+        #[should_panic(expected = "Your handler accepts the following types:")]
+        async fn deeply_nested_conditional_failure() {
+            #[derive(Clone)]
+            struct A;
+            #[derive(Clone)]
+            struct B;
+
+            // Deep nesting where conditional outcome propagation should fail.
+            let handler: Handler<()> = entry()
+                .branch(
+                    entry()
+                        .branch(crate::filter_map(|| Some(A)).endpoint(|| async {}))
+                        .branch(crate::filter_map(|_: A| Some(B)).endpoint(|| async {})),
+                )
+                .branch(endpoint(|_: B| async {})); // `B` is not guaranteed to be available
+
+            type_check(handler.sig(), &deps![], &[]);
+        }
+
+        #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
+                                second handler will never be called.")]
+        fn chain_endpoint_with_handler() {
+            let _: Handler<()> = endpoint(|| async {}).endpoint(|| async {});
+        }
+
+        #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
+                                second handler will never be called.")]
+        fn chain_endpoint_with_filter() {
+            let _: Handler<()> = endpoint(|| async {}).filter(|_: i32| true);
+        }
+
+        #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
+                                second handler will never be called.")]
+        fn chain_endpoint_with_map() {
+            let _: Handler<()> = endpoint(|| async {}).map(|| 42);
+        }
+
+        #[should_panic(expected = "Dead code detected: since the first handler aborts execution, the \
+                                second handler will never be called.")]
+        fn chain_complex_endpoint_dead_code() {
+            let _: Handler<()> = entry()
+                .chain(filter(|x: i32| x > 0))
+                .chain(endpoint(|| async {}))
+                .chain(crate::map(|| "Unreachable"));
+        }
     }
 }

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
  - Support for the trailing comma in the `deps` macro ([PR #37](https://github.com/teloxide/dptree/pull/37)).
+ - Support for the `wasm32-unknown-unknown` target via `MaybeSend`/`MaybeSync` traits and a conditional `BoxFuture` alias ([PR #38](https://github.com/teloxide/dptree/issues/38)).
 
 ## 0.5.1 - 2025-07-10
 

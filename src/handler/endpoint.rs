@@ -1,6 +1,9 @@
 use crate::{
-    description, di::Injectable, from_fn_with_description, Handler, HandlerDescription,
-    HandlerSignature,
+    description,
+    di::Injectable,
+    from_fn_with_description,
+    send::{MaybeSend, MaybeSync},
+    Handler, HandlerDescription, HandlerSignature,
 };
 
 use std::{collections::BTreeSet, ops::ControlFlow, sync::Arc};
@@ -16,7 +19,7 @@ use futures::FutureExt;
 #[track_caller]
 pub fn endpoint<'a, F, Output, FnArgs, Descr>(f: F) -> Endpoint<'a, Output, Descr>
 where
-    F: Injectable<Output, FnArgs> + Send + Sync + 'a,
+    F: Injectable<Output, FnArgs> + MaybeSend + MaybeSync + 'a,
     Output: 'static,
     Descr: HandlerDescription,
 {
@@ -48,22 +51,23 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
-    async fn test_endpoint() {
-        let input = 123;
-        let output = 7;
+    crate::cross_test! {
+        async fn test_endpoint() {
+            let input = 123;
+            let output = 7;
 
-        let result = help_inference(endpoint(move |num: i32| async move {
-            assert_eq!(num, input);
-            output
-        }))
-        .dispatch(deps![input])
-        .await;
+            let result = help_inference(endpoint(move |num: i32| async move {
+                assert_eq!(num, input);
+                output
+            }))
+            .dispatch(deps![input])
+            .await;
 
-        let result = match result {
-            ControlFlow::Break(b) => b,
-            _ => panic!("Unexpected: handler return ControlFlow::Break"),
-        };
-        assert_eq!(result, output);
+            let result = match result {
+                ControlFlow::Break(b) => b,
+                _ => panic!("Unexpected: handler return ControlFlow::Break"),
+            };
+            assert_eq!(result, output);
+        }
     }
 }

@@ -1,6 +1,8 @@
 use crate::{
     di::{Asyncify, Injectable},
-    from_fn_with_description, Handler, HandlerDescription, HandlerSignature, Type,
+    from_fn_with_description,
+    send::{MaybeSend, MaybeSync},
+    Handler, HandlerDescription, HandlerSignature, Type,
 };
 
 use std::{collections::BTreeSet, iter::FromIterator, ops::ControlFlow, sync::Arc};
@@ -17,7 +19,7 @@ pub fn filter_map<'a, Projection, Output, NewType, Args, Descr>(
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Asyncify<Projection>: Injectable<Option<NewType>, Args> + Send + Sync + 'a,
+    Asyncify<Projection>: Injectable<Option<NewType>, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
     NewType: Send + Sync + 'static,
@@ -32,7 +34,7 @@ pub fn filter_map_async<'a, Projection, Output, NewType, Args, Descr>(
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Projection: Injectable<Option<NewType>, Args> + Send + Sync + 'a,
+    Projection: Injectable<Option<NewType>, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
     NewType: Send + Sync + 'static,
@@ -48,7 +50,7 @@ pub fn filter_map_with_description<'a, Projection, Output, NewType, Args, Descr>
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Asyncify<Projection>: Injectable<Option<NewType>, Args> + Send + Sync + 'a,
+    Asyncify<Projection>: Injectable<Option<NewType>, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     NewType: Send + Sync + 'static,
 {
@@ -63,7 +65,7 @@ pub fn filter_map_async_with_description<'a, Projection, Output, NewType, Args, 
     proj: Projection,
 ) -> Handler<'a, Output, Descr>
 where
-    Projection: Injectable<Option<NewType>, Args> + Send + Sync + 'a,
+    Projection: Injectable<Option<NewType>, Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     NewType: Send + Sync + 'static,
 {
@@ -106,28 +108,28 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
-    async fn test_some() {
-        let value = 123;
+    crate::cross_test! {
+        async fn test_some() {
+            let value = 123;
 
-        let result = help_inference(filter_map(move || Some(value)))
-            .endpoint(move |event: i32| async move {
-                assert_eq!(event, value);
-                value
-            })
-            .dispatch(deps![])
-            .await;
+            let result = help_inference(filter_map(move || Some(value)))
+                .endpoint(move |event: i32| async move {
+                    assert_eq!(event, value);
+                    value
+                })
+                .dispatch(deps![])
+                .await;
 
-        assert!(result == ControlFlow::Break(value));
-    }
+            assert!(result == ControlFlow::Break(value));
+        }
 
-    #[tokio::test]
-    async fn test_none() {
-        let result = help_inference(filter_map(|| None::<i32>))
-            .endpoint(|| async move { unreachable!() })
-            .dispatch(deps![])
-            .await;
+        async fn test_none() {
+            let result = help_inference(filter_map(|| None::<i32>))
+                .endpoint(|| async move { unreachable!() })
+                .dispatch(deps![])
+                .await;
 
-        assert!(result == ControlFlow::Continue(crate::deps![]));
+            assert!(result == ControlFlow::Continue(crate::deps![]));
+        }
     }
 }

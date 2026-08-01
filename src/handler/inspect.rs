@@ -1,6 +1,8 @@
 use crate::{
     di::{Asyncify, Injectable},
-    from_fn_with_description, Handler, HandlerDescription, HandlerSignature,
+    from_fn_with_description,
+    send::{MaybeSend, MaybeSync},
+    Handler, HandlerDescription, HandlerSignature,
 };
 
 use std::{collections::BTreeSet, sync::Arc};
@@ -13,7 +15,7 @@ use std::{collections::BTreeSet, sync::Arc};
 #[track_caller]
 pub fn inspect<'a, F, Output, Args, Descr>(f: F) -> Handler<'a, Output, Descr>
 where
-    Asyncify<F>: Injectable<(), Args> + Send + Sync + 'a,
+    Asyncify<F>: Injectable<(), Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
 {
@@ -25,7 +27,7 @@ where
 #[track_caller]
 pub fn inspect_async<'a, F, Output, Args, Descr>(f: F) -> Handler<'a, Output, Descr>
 where
-    F: Injectable<(), Args> + Send + Sync + 'a,
+    F: Injectable<(), Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
     Descr: HandlerDescription,
 {
@@ -40,7 +42,7 @@ pub fn inspect_with_description<'a, F, Output, Args, Descr>(
     f: F,
 ) -> Handler<'a, Output, Descr>
 where
-    Asyncify<F>: Injectable<(), Args> + Send + Sync + 'a,
+    Asyncify<F>: Injectable<(), Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
 {
     inspect_async_with_description(description, Asyncify(f))
@@ -54,7 +56,7 @@ pub fn inspect_async_with_description<'a, F, Output, Args, Descr>(
     f: F,
 ) -> Handler<'a, Output, Descr>
 where
-    F: Injectable<(), Args> + Send + Sync + 'a,
+    F: Injectable<(), Args> + MaybeSend + MaybeSync + 'a,
     Output: 'a,
 {
     let f = Arc::new(f);
@@ -91,20 +93,21 @@ mod tests {
     use super::*;
     use crate::{deps, help_inference};
 
-    #[tokio::test]
-    async fn test_inspect() {
-        let value = 123;
-        let inspect_passed = Arc::new(AtomicBool::new(false));
-        let inspect_passed_cloned = Arc::clone(&inspect_passed);
+    crate::cross_test! {
+        async fn test_inspect() {
+            let value = 123;
+            let inspect_passed = Arc::new(AtomicBool::new(false));
+            let inspect_passed_cloned = Arc::clone(&inspect_passed);
 
-        let result: ControlFlow<(), _> = help_inference(inspect(move |x: i32| {
-            assert_eq!(x, value);
-            inspect_passed_cloned.swap(true, Ordering::Relaxed);
-        }))
-        .dispatch(deps![value])
-        .await;
+            let result: ControlFlow<(), _> = help_inference(inspect(move |x: i32| {
+                assert_eq!(x, value);
+                inspect_passed_cloned.swap(true, Ordering::Relaxed);
+            }))
+            .dispatch(deps![value])
+            .await;
 
-        assert!(matches!(result, ControlFlow::Continue(_)));
-        assert!(inspect_passed.load(Ordering::Relaxed));
+            assert!(matches!(result, ControlFlow::Continue(_)));
+            assert!(inspect_passed.load(Ordering::Relaxed));
+        }
     }
 }
